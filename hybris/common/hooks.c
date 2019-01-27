@@ -1272,6 +1272,36 @@ static int _hybris_hook_pthread_rwlock_unlock(pthread_rwlock_t *__rwlock)
     return pthread_rwlock_unlock(realrwlock);
 }
 
+/* Bionic implementation of pthread_cleanup_push/pop doesn't support C++ exceptions
+   and thread cancelation. We only make sure to call the cleanup routine when
+   requested. We duplicate the bionic cleanup struct here for our purposes. */
+
+typedef void (*bionic___pthread_cleanup_func_t)(void*);
+
+typedef struct bionic___pthread_cleanup_t {
+    struct bionic___pthread_cleanup_t*  __cleanup_prev;     /* unused */
+    bionic___pthread_cleanup_func_t     __cleanup_routine;
+    void*                               __cleanup_arg;
+} bionic___pthread_cleanup_t;
+
+static void _hybris_hook___pthread_cleanup_push(void *bionic_cleanup, void *routine, void *arg)
+{
+    bionic___pthread_cleanup_t *cleanup = bionic_cleanup;
+
+    TRACE_HOOK("cleanup %p routine %p arg %p", cleanup, routine, arg);
+    cleanup->__cleanup_routine = routine;
+    cleanup->__cleanup_arg = arg;
+}
+
+static void _hybris_hook___pthread_cleanup_pop(void *bionic_cleanup, int execute)
+{
+    bionic___pthread_cleanup_t *cleanup = bionic_cleanup;
+
+    TRACE_HOOK("cleanup %p execute %d", cleanup, execute);
+    if (execute)
+        cleanup->__cleanup_routine(cleanup->__cleanup_arg);
+}
+
 #define min(X,Y) (((X) < (Y)) ? (X) : (Y))
 
 static pid_t _hybris_hook_pthread_gettid_np(pthread_t t)
@@ -2584,6 +2614,8 @@ static struct _hook hooks_common[] = {
     HOOK_INDIRECT(pthread_rwlock_trywrlock),
     HOOK_INDIRECT(pthread_rwlock_timedrdlock),
     HOOK_INDIRECT(pthread_rwlock_timedwrlock),
+    HOOK_INDIRECT(__pthread_cleanup_push),
+    HOOK_INDIRECT(__pthread_cleanup_pop),
     /* bionic-only pthread */
     HOOK_TO(__pthread_gettid, _hybris_hook_pthread_gettid_np),
     HOOK_INDIRECT(pthread_gettid_np),
@@ -2645,6 +2677,7 @@ static struct _hook hooks_common[] = {
     HOOK_INDIRECT(setlinebuf),
     HOOK_TO(__errno, __errno_location),
     HOOK_INDIRECT(__set_errno),
+    HOOK_TO(__set_errno_internal, _hybris_hook___set_errno),
     HOOK_TO(__progname, &program_invocation_name),
     /* net specifics, to avoid __res_get_state */
     HOOK_INDIRECT(getaddrinfo),
